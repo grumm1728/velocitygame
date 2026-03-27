@@ -1,5 +1,18 @@
-import type { CSSProperties } from 'react'
-import type { TracePoint } from '../types'
+import type { CSSProperties, PointerEvent, ReactNode } from 'react'
+import type { Breakpoint, TracePoint } from '../types'
+
+type Domain = {
+  min: number
+  max: number
+}
+
+type GraphDrawingProps = {
+  enabled: boolean
+  previewTrace: TracePoint[]
+  onDrawStart: (point: Breakpoint) => void
+  onDrawMove: (point: Breakpoint) => void
+  onDrawEnd: () => void
+}
 
 type GraphPanelProps = {
   title: string
@@ -9,6 +22,9 @@ type GraphPanelProps = {
   playerTrace: TracePoint[]
   targetTrace?: TracePoint[]
   accentColor: string
+  actions?: ReactNode
+  fixedDomain?: Domain
+  drawing?: GraphDrawingProps
 }
 
 const WIDTH = 760
@@ -16,7 +32,7 @@ const HEIGHT = 180
 const PADDING_X = 48
 const PADDING_Y = 18
 
-function getYDomain(playerTrace: TracePoint[], targetTrace?: TracePoint[]) {
+function getYDomain(playerTrace: TracePoint[], targetTrace?: TracePoint[]): Domain {
   const values = [...playerTrace, ...(targetTrace ?? [])].map((point) => point.y)
 
   if (values.length === 0) {
@@ -51,6 +67,24 @@ function linePath(trace: TracePoint[], duration: number, minY: number, maxY: num
     .join(' ')
 }
 
+function convertPointerToGraphPoint(
+  event: PointerEvent<SVGSVGElement>,
+  duration: number,
+  domain: Domain,
+): Breakpoint {
+  const bounds = event.currentTarget.getBoundingClientRect()
+  const usableWidth = bounds.width - (PADDING_X / WIDTH) * bounds.width * 2
+  const usableHeight = bounds.height - (PADDING_Y / HEIGHT) * bounds.height * 2
+  const left = bounds.left + (PADDING_X / WIDTH) * bounds.width
+  const top = bounds.top + (PADDING_Y / HEIGHT) * bounds.height
+  const x = Math.min(Math.max(event.clientX - left, 0), usableWidth)
+  const y = Math.min(Math.max(event.clientY - top, 0), usableHeight)
+  const time = (x / usableWidth) * duration
+  const value = domain.max - (y / usableHeight) * (domain.max - domain.min || 1)
+
+  return { t: time, y: value }
+}
+
 export function GraphPanel({
   title,
   unitLabel,
@@ -59,22 +93,54 @@ export function GraphPanel({
   playerTrace,
   targetTrace,
   accentColor,
+  actions,
+  fixedDomain,
+  drawing,
 }: GraphPanelProps) {
-  const { min, max } = getYDomain(playerTrace, targetTrace)
+  const domain = fixedDomain ?? getYDomain(playerTrace, targetTrace)
+  const { min, max } = domain
   const currentX = PADDING_X + (currentTime / duration) * (WIDTH - PADDING_X * 2)
   const ticks = Array.from({ length: Math.floor(duration) + 1 }, (_, index) => index)
   const yTicks = Array.from({ length: 5 }, (_, index) => min + ((max - min) / 4) * index)
+  const zeroY = HEIGHT - PADDING_Y - ((0 - min) / (max - min || 1)) * (HEIGHT - PADDING_Y * 2)
 
   return (
-    <section className="graph-panel">
+    <section className={`graph-panel ${drawing?.enabled ? 'graph-panel--drawing' : ''}`}>
       <header className="graph-panel__header">
         <div>
           <p className="graph-panel__eyebrow">{title}</p>
           <h3>{unitLabel}</h3>
         </div>
+        {actions ? <div className="graph-panel__actions">{actions}</div> : null}
       </header>
 
-      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="graph-panel__svg" aria-label={`${title} graph`}>
+      <svg
+        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        className="graph-panel__svg"
+        aria-label={`${title} graph`}
+        onPointerDown={(event) => {
+          if (!drawing?.enabled) {
+            return
+          }
+
+          event.currentTarget.setPointerCapture(event.pointerId)
+          drawing.onDrawStart(convertPointerToGraphPoint(event, duration, domain))
+        }}
+        onPointerMove={(event) => {
+          if (!drawing?.enabled || (event.buttons & 1) === 0) {
+            return
+          }
+
+          drawing.onDrawMove(convertPointerToGraphPoint(event, duration, domain))
+        }}
+        onPointerUp={() => {
+          if (!drawing?.enabled) {
+            return
+          }
+
+          drawing.onDrawEnd()
+        }}
+      >
         <rect x="0" y="0" width={WIDTH} height={HEIGHT} rx="24" className="graph-panel__background" />
 
         {ticks.map((tick) => {
@@ -101,6 +167,10 @@ export function GraphPanel({
           )
         })}
 
+        {zeroY >= PADDING_Y && zeroY <= HEIGHT - PADDING_Y ? (
+          <line x1={PADDING_X} y1={zeroY} x2={WIDTH - PADDING_X} y2={zeroY} className="graph-panel__axis" />
+        ) : null}
+
         {targetTrace && targetTrace.length > 1 ? (
           <path d={linePath(targetTrace, duration, min, max)} className="graph-panel__target" />
         ) : null}
@@ -111,6 +181,10 @@ export function GraphPanel({
             className="graph-panel__player"
             style={{ '--graph-accent': accentColor } as CSSProperties}
           />
+        ) : null}
+
+        {drawing?.previewTrace && drawing.previewTrace.length > 1 ? (
+          <path d={linePath(drawing.previewTrace, duration, min, max)} className="graph-panel__draft" />
         ) : null}
 
         <line

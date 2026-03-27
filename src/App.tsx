@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import './App.css'
 import { GraphPanel } from './components/GraphPanel'
 import { RadialPedal } from './components/RadialPedal'
+import { getBreakpointDomain, smoothDrawnBreakpoints } from './game/drawing'
 import { sampleLevel, sampleTargetTrace } from './game/levels'
 import { buildRunResult } from './game/scoring'
 import {
@@ -10,9 +11,9 @@ import {
   createInitialSimulationState,
   integrateSimulationStep,
 } from './game/simulation'
-import type { RunResult, SimulationState, TracePoint } from './types'
+import type { Breakpoint, LevelDefinition, RunResult, SimulationState, TracePoint } from './types'
 
-type RunStatus = 'ready' | 'running' | 'finished'
+type RunStatus = 'ready' | 'countdown' | 'running' | 'finished'
 
 function formatNumber(value: number) {
   return `${value >= 0 ? '+' : ''}${value.toFixed(2)}`
@@ -42,12 +43,28 @@ function buildInitialTraces(initialState: SimulationState) {
   }
 }
 
+function buildLevel(targetBreakpoints: Breakpoint[]): LevelDefinition {
+  return {
+    ...sampleLevel,
+    breakpoints: targetBreakpoints,
+  }
+}
+
 export default function App() {
-  const level = sampleLevel
-  const targetVelocityTrace = useMemo(() => sampleTargetTrace(level, 'velocity'), [level])
-  const initialState = useMemo(() => createInitialSimulationState(level), [level])
+  const [targetBreakpoints, setTargetBreakpoints] = useState<Breakpoint[]>(sampleLevel.breakpoints)
   const [status, setStatus] = useState<RunStatus>('ready')
+  const [countdownValue, setCountdownValue] = useState<number | null>(null)
   const [controlValue, setControlValue] = useState(0)
+  const [isDrawingTarget, setIsDrawingTarget] = useState(false)
+  const [draftBreakpoints, setDraftBreakpoints] = useState<Breakpoint[]>([])
+  const level = useMemo(() => buildLevel(targetBreakpoints), [targetBreakpoints])
+  const targetVelocityTrace = useMemo(() => sampleTargetTrace(level, 'velocity'), [level])
+  const drawingDomain = useMemo(() => getBreakpointDomain(targetBreakpoints), [targetBreakpoints])
+  const draftTrace = useMemo(
+    () => (draftBreakpoints.length > 1 ? sampleTargetTrace(buildLevel(draftBreakpoints), 'velocity') : []),
+    [draftBreakpoints],
+  )
+  const initialState = useMemo(() => createInitialSimulationState(level), [level])
   const [simulationState, setSimulationState] = useState<SimulationState>(initialState)
   const [velocityTrace, setVelocityTrace] = useState<TracePoint[]>(() => [{ t: 0, y: initialState.velocity }])
   const [accelerationTrace, setAccelerationTrace] = useState<TracePoint[]>(() => [{ t: 0, y: 0 }])
@@ -55,6 +72,7 @@ export default function App() {
   const [runResult, setRunResult] = useState<RunResult | null>(null)
   const controlValueRef = useRef(0)
   const animationFrameRef = useRef<number | null>(null)
+  const countdownIntervalRef = useRef<number | null>(null)
   const lastFrameRef = useRef<number | null>(null)
   const accumulatorRef = useRef(0)
   const simStateRef = useRef(initialState)
@@ -62,21 +80,31 @@ export default function App() {
   const accelerationTraceRef = useRef<TracePoint[]>([{ t: 0, y: 0 }])
   const positionTraceRef = useRef<TracePoint[]>([{ t: 0, y: initialState.position }])
   const statusRef = useRef<RunStatus>('ready')
+  const drawnPointsRef = useRef<Breakpoint[]>([])
 
-  const resetRun = () => {
-    const resetState = createInitialSimulationState(level)
+  const clearCountdown = () => {
+    if (countdownIntervalRef.current !== null) {
+      window.clearInterval(countdownIntervalRef.current)
+      countdownIntervalRef.current = null
+    }
+  }
+
+  const resetRun = (nextLevel: LevelDefinition = level) => {
+    const resetState = createInitialSimulationState(nextLevel)
     const traces = buildInitialTraces(resetState)
 
     if (animationFrameRef.current !== null) {
       cancelAnimationFrame(animationFrameRef.current)
     }
 
+    clearCountdown()
     animationFrameRef.current = null
     lastFrameRef.current = null
     accumulatorRef.current = 0
     controlValueRef.current = 0
     setControlValue(0)
     setStatus('ready')
+    setCountdownValue(null)
     setRunResult(null)
     setSimulationState(resetState)
     setVelocityTrace(traces.velocity)
@@ -96,6 +124,7 @@ export default function App() {
     setRunResult(result)
     setControlValue(0)
     controlValueRef.current = 0
+    setCountdownValue(null)
 
     if (animationFrameRef.current !== null) {
       cancelAnimationFrame(animationFrameRef.current)
@@ -166,20 +195,68 @@ export default function App() {
     }
   }
 
+  const beginRunning = () => {
+    clearCountdown()
+    setStatus('running')
+    statusRef.current = 'running'
+    setCountdownValue(null)
+    lastFrameRef.current = null
+    accumulatorRef.current = 0
+    animationFrameRef.current = requestAnimationFrame(runFrame)
+  }
+
   const startRun = () => {
+    if (statusRef.current === 'running' || statusRef.current === 'countdown' || isDrawingTarget) {
+      return
+    }
+
+    const freshLevel = buildLevel(targetBreakpoints)
+
+    resetRun(freshLevel)
+    setStatus('countdown')
+    statusRef.current = 'countdown'
+    setCountdownValue(3)
+
+    let nextCount = 3
+    countdownIntervalRef.current = window.setInterval(() => {
+      nextCount -= 1
+
+      if (nextCount <= 0) {
+        beginRunning()
+        return
+      }
+
+      setCountdownValue(nextCount)
+    }, 1000)
+  }
+
+  const beginDrawingTarget = () => {
+    clearCountdown()
     if (statusRef.current === 'running') {
       return
     }
 
-    if (statusRef.current === 'finished') {
-      resetRun()
+    setIsDrawingTarget(true)
+    setDraftBreakpoints([])
+    drawnPointsRef.current = []
+  }
+
+  const cancelCustomGraph = () => {
+    setIsDrawingTarget(false)
+    setDraftBreakpoints([])
+    drawnPointsRef.current = []
+    setTargetBreakpoints(sampleLevel.breakpoints)
+    resetRun(buildLevel(sampleLevel.breakpoints))
+  }
+
+  const submitCustomGraph = () => {
+    if (draftBreakpoints.length < 2) {
+      return
     }
 
-    setStatus('running')
-    statusRef.current = 'running'
-    lastFrameRef.current = null
-    accumulatorRef.current = 0
-    animationFrameRef.current = requestAnimationFrame(runFrame)
+    setIsDrawingTarget(false)
+    setTargetBreakpoints(draftBreakpoints)
+    resetRun(buildLevel(draftBreakpoints))
   }
 
   useEffect(() => {
@@ -187,10 +264,22 @@ export default function App() {
       if (animationFrameRef.current !== null) {
         cancelAnimationFrame(animationFrameRef.current)
       }
+
+      clearCountdown()
     }
   }, [])
 
   const progress = simulationState.time / level.durationSeconds
+  const isControlDisabled = status !== 'running'
+  const hasCustomTarget = targetBreakpoints !== sampleLevel.breakpoints
+  const startButtonLabel =
+    status === 'countdown'
+      ? `Starting in ${countdownValue ?? 3}`
+      : status === 'running'
+        ? 'Run in progress'
+        : status === 'finished'
+          ? 'Run again'
+          : 'Start run'
 
   return (
     <main className="app-shell">
@@ -200,13 +289,21 @@ export default function App() {
       <section className="hero-card">
         <div className="hero-card__copy">
           <p className="hero-card__eyebrow">Calculus Motion Lab</p>
-          <h1>Control acceleration and draw the velocity story live.</h1>
-          <p className="hero-card__summary">{level.prompt}</p>
+          <h1>Control acceleration. Match the velocity graph.</h1>
+          <p className="hero-card__summary">
+            Press start for a countdown, then steer acceleration with the pedal while position, velocity, and
+            acceleration evolve together.
+          </p>
         </div>
 
         <div className="hero-card__actions">
-          <button type="button" className="button button--primary" onClick={() => startRun()}>
-            {status === 'ready' ? 'Start run' : status === 'running' ? 'Running...' : 'Restart level'}
+          <button
+            type="button"
+            className="button button--primary"
+            onClick={() => startRun()}
+            disabled={status === 'countdown' || status === 'running' || isDrawingTarget}
+          >
+            {startButtonLabel}
           </button>
           <button type="button" className="button button--ghost" onClick={() => resetRun()}>
             Reset
@@ -241,7 +338,11 @@ export default function App() {
             <div className="timeline-card__bar">
               <div className="timeline-card__fill" style={{ width: `${Math.min(progress * 100, 100)}%` }} />
             </div>
-            <p>Hold clockwise for positive acceleration, release to coast, and drag left to brake.</p>
+            <p>
+              {status === 'countdown'
+                ? `Countdown: ${countdownValue}`
+                : 'Hold clockwise for positive acceleration, release to coast, and drag left to brake.'}
+            </p>
           </div>
 
           <GraphPanel
@@ -252,6 +353,54 @@ export default function App() {
             playerTrace={velocityTrace}
             targetTrace={targetVelocityTrace}
             accentColor="#ff8a5b"
+            fixedDomain={drawingDomain}
+            actions={
+              isDrawingTarget ? (
+                <>
+                  <button
+                    type="button"
+                    className="button button--graph"
+                    onClick={() => submitCustomGraph()}
+                    disabled={draftBreakpoints.length < 2}
+                  >
+                    Submit graph
+                  </button>
+                  <button type="button" className="button button--ghost button--graph" onClick={() => cancelCustomGraph()}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="button button--graph"
+                  onClick={() => beginDrawingTarget()}
+                  disabled={status === 'running' || status === 'countdown'}
+                >
+                  Draw new graph
+                </button>
+              )
+            }
+            drawing={{
+              enabled: isDrawingTarget,
+              previewTrace: draftTrace,
+              onDrawStart: (point) => {
+                drawnPointsRef.current = [point]
+                setDraftBreakpoints([point])
+              },
+              onDrawMove: (point) => {
+                drawnPointsRef.current = [...drawnPointsRef.current, point]
+                setDraftBreakpoints(drawnPointsRef.current)
+              },
+              onDrawEnd: () => {
+                const smoothed = smoothDrawnBreakpoints(
+                  drawnPointsRef.current,
+                  level.durationSeconds,
+                  drawingDomain,
+                )
+                drawnPointsRef.current = smoothed
+                setDraftBreakpoints(smoothed)
+              },
+            }}
           />
           <GraphPanel
             title="Player Input"
@@ -274,8 +423,8 @@ export default function App() {
         <aside className="dashboard__right">
           <RadialPedal
             value={controlValue}
-            disabled={status === 'finished'}
-            onStartInteraction={() => startRun()}
+            disabled={isControlDisabled}
+            onStartInteraction={() => {}}
             onChange={(nextValue) => {
               controlValueRef.current = nextValue
               setControlValue(nextValue)
@@ -284,10 +433,11 @@ export default function App() {
 
           <section className="score-card">
             <p className="score-card__eyebrow">Mission</p>
-            <h2>{level.title}</h2>
+            <h2>{hasCustomTarget ? 'Custom Trace' : level.title}</h2>
             <p className="score-card__summary">
-              Match the white target velocity trace. Your orange line should rise, plateau, dip, and recover at the
-              finish.
+              {hasCustomTarget
+                ? 'You are matching your own custom velocity curve. Submit another sketch anytime to build a new challenge.'
+                : 'Match the white target velocity trace. Your orange line should rise, plateau, dip, and recover at the finish.'}
             </p>
 
             <div className="score-card__bands">
@@ -314,9 +464,15 @@ export default function App() {
               </>
             ) : (
               <>
-                <strong className="results-card__score">--</strong>
-                <span className="results-card__medal">Score appears at the finish</span>
-                <p className="results-card__error">Try accelerating hard for 2 seconds, coasting, then braking.</p>
+                <strong className="results-card__score">{status === 'countdown' ? countdownValue : '--'}</strong>
+                <span className="results-card__medal">
+                  {status === 'countdown' ? 'Get ready to launch' : 'Score appears at the finish'}
+                </span>
+                <p className="results-card__error">
+                  {isDrawingTarget
+                    ? 'Sketch directly on the velocity graph, release to smooth it, then submit or cancel.'
+                    : 'Try accelerating hard for 2 seconds, coasting, then braking.'}
+                </p>
               </>
             )}
           </section>

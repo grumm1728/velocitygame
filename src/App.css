@@ -31,7 +31,7 @@ button {
   position: relative;
   overflow: hidden;
   min-height: 100vh;
-  padding: 32px;
+  padding: 20px 28px 28px;
 }
 
 .app-shell__glow {
@@ -75,9 +75,9 @@ button {
   display: flex;
   justify-content: space-between;
   gap: 24px;
-  align-items: end;
-  padding: 28px;
-  border-radius: 28px;
+  align-items: center;
+  padding: 18px 22px;
+  border-radius: 24px;
 }
 
 .hero-card__eyebrow,
@@ -101,9 +101,9 @@ button {
 }
 
 .hero-card h1 {
-  max-width: 9ch;
-  font-size: clamp(2.6rem, 4.5vw, 4.8rem);
-  line-height: 0.95;
+  max-width: 13ch;
+  font-size: clamp(2rem, 3vw, 3.2rem);
+  line-height: 0.98;
 }
 
 .hero-card__summary,
@@ -117,7 +117,7 @@ button {
 
 .hero-card__copy {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .hero-card__actions {
@@ -129,11 +129,17 @@ button {
 .button {
   border: 0;
   border-radius: 999px;
-  padding: 14px 20px;
+  padding: 12px 18px;
   cursor: pointer;
   transition:
     transform 180ms ease,
     opacity 180ms ease;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
 }
 
 .button:hover {
@@ -157,7 +163,7 @@ button {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.8fr);
   gap: 24px;
-  margin-top: 24px;
+  margin-top: 16px;
 }
 
 .dashboard__left,
@@ -190,7 +196,7 @@ button {
 
 .timeline-card {
   border-radius: 22px;
-  padding: 16px 18px;
+  padding: 14px 18px;
 }
 
 .timeline-card__bar {
@@ -217,6 +223,13 @@ button {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
+  gap: 12px;
+}
+
+.graph-panel__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .graph-panel__svg {
@@ -232,6 +245,11 @@ button {
 .graph-panel__grid {
   stroke: rgba(255, 255, 255, 0.1);
   stroke-width: 1;
+}
+
+.graph-panel__axis {
+  stroke: rgba(255, 213, 102, 0.95);
+  stroke-width: 2.5;
 }
 
 .graph-panel__label {
@@ -263,6 +281,19 @@ button {
   stroke: rgba(143, 222, 208, 0.9);
   stroke-width: 2;
   stroke-dasharray: 6 6;
+}
+
+.graph-panel__draft {
+  fill: none;
+  stroke: #8fded0;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 10 6;
+}
+
+.graph-panel--drawing .graph-panel__svg {
+  cursor: crosshair;
 }
 
 .pedal-card,
@@ -370,6 +401,12 @@ button {
   font-size: 0.82rem;
 }
 
+.button--graph {
+  padding: 9px 14px;
+  background: rgba(143, 222, 208, 0.16);
+  color: #f8f5ec;
+}
+
 .results-card__score {
   display: block;
   margin-top: 8px;
@@ -391,10 +428,14 @@ button {
 
 @media (max-width: 760px) {
   .app-shell {
-    padding: 18px;
+    padding: 16px;
   }
 
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hero-card {
+    padding: 16px;
   }
 }
